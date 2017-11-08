@@ -1,0 +1,6 @@
+keras
+edward
+tensorflow==1.4
+https://github.com/farizrahman4u/recurrentshop
+https://github.com/farizrahman4u/seq2seq
+
