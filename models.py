@@ -199,14 +199,14 @@ def Seq2Seq(output_dim, output_length, batch_input_shape=None,
     decoded_seq = decoder(encoded_seq2,
                           ground_truth=inputs[1] if teacher_force else None,
                           initial_readout=encoded_seq2, initial_state=states)
-    
+
     model = Model(inputs, decoded_seq)
     enc = Model(inputs, encoded_seq)
 
     model.encoder = encoder
     model.decoder = decoder
 
-    return model, enc
+    return model  #, enc
 
 def AttentionSeq2Seq(output_dim, output_length, batch_input_shape=None,
                      batch_size=None, input_shape=None, input_length=None,
@@ -286,7 +286,7 @@ def AttentionSeq2Seq(output_dim, output_length, batch_input_shape=None,
             decoder.add(LSTMDecoderCell(output_dim=hidden_dim, hidden_dim=hidden_dim))
         decoder.add(Dropout(dropout))
         decoder.add(LSTMDecoderCell(output_dim=output_dim, hidden_dim=hidden_dim))
-    
+
     inputs = [_input]
     decoded = decoder(encoded)
     model = Model(inputs, decoded)

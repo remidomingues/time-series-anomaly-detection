@@ -19,7 +19,7 @@ class LSTMAEBNN:
     def __init__(self):
         pass
 
-    def sliding_batches(self, X, window_size, overlap=0):
+    def _sliding_batches(self, X, window_size, overlap=0):
         """
         overlap: if 0, X will be chunked into sequences without overlap
         """
@@ -27,33 +27,41 @@ class LSTMAEBNN:
                         for start in range(0, X.shape[0], window_size)])
 
 
-    def fit(self, X_train, epochs=10, hidden_dim=5, depth=1, window_size=10, overlap=0):
-        batches = self.sliding_batches(X_train, window_size)
+    def _fit_bnn(self, X_train):
+        """
+        Fit a Bayesian Neural Network in order to predict the next action given the latent representation
+        of an action sequence
+        """
+        # use the next action (or actually a binary vector of #number of possible actions) as Y
+        # rediction wil lbe the likelihood of the next action
 
-        self.model, self.encoder = Seq2Seq(input_dim=batches.shape[2], hidden_dim=hidden_dim, output_length=window_size,
+
+    def fit(self, X_train, epochs=10, hidden_dim=5, depth=1, window_size=10, overlap=0):
+        # Split the training data into overlapping batches, based on a sliding window
+        batches = self._sliding_batches(X_train, window_size)
+
+        # Train a LSTM Autoencoder (seq2seq)
+        self.model = Seq2Seq(input_dim=batches.shape[2], hidden_dim=hidden_dim, output_length=window_size,
                         output_dim=batches.shape[2], depth=depth)
-        self.model.compile(loss='mse', optimizer='adam')
+        self.model.compile(loss='mse', optimizer='adam')  # 'rmsprop'
         self.model.fit(batches, batches, epochs=epochs)
 
+        # self.model.get_layer('recurrentseq').get_weights()
+        # print(self.model.summary())
 
-        # Temporary check: encoder weights should be equal to model weights (?)
-        a = self.model.get_layer('recurrentseq').get_weights()
-        b = self.encoder.get_layer('recurrentseq').get_weights()
-        assert all([np.allclose(x, y) for x, y in zip(a, b)])
+        # Latent variables (n_samples, n_hidden, d_in)
+        latent = encoder.predict(X_train)
+        print(latent.shape)
 
-        """ TODO:
-        Once the seq2seq (LSTM-AE) is trained, feed testing data, obtain N encoded latent vectors, feed them to the BNN
-        as X, use the next action (or actually a binary vector of #number of possible actions) as Y. Prediction wil lbe
-        the likelihood of the next action
-        """
-        # Do that here
-
-        #Note: how do we predict the likelihood of an entire action sequence?
-        #=> We can't, except if we use a variational autoencoder between to encode the latent variables, and then get the likel;ihood
+        # BNN classification
+        self.fit_bnn(latent, batches)
 
         return self.model
 
     def predict(self, X_test):
+        #Note: how do we predict the likelihood of an entire action sequence?
+        #=> We can't, except if we use a variational autoencoder between to encode the latent variables, and then get the likel;ihood
+        # Or we can use the reconstruction error, but then why pass latent vars to BNN instead of raw action seq?
         pass
 
 
