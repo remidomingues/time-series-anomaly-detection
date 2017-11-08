@@ -206,7 +206,7 @@ def Seq2Seq(output_dim, output_length, batch_input_shape=None,
     model.encoder = encoder
     model.decoder = decoder
 
-    return model  #, enc
+    return model, enc
 
 def AttentionSeq2Seq(output_dim, output_length, batch_input_shape=None,
                      batch_size=None, input_shape=None, input_length=None,

@@ -21,7 +21,6 @@ class BNN(object):
             self.X = tf.placeholder(tf.float32, [n_samples, d_in], name='X')
             self.Y = Normal(loc=self._neural_network(self.X), scale=0.1 * tf.ones(n_samples, dtype=tf.float32), name='Y')
 
-
     def _neural_network(self, x):
         h = x
         for i, (W_i, b_i) in enumerate(self.weights):
@@ -29,7 +28,6 @@ class BNN(object):
             if i != len(self.weights)-1:
                 h = tf.tanh(h)
         return tf.reshape(h, [-1])
-
 
     def _inference(self, X_train, Y_train, iterations):
         with tf.name_scope('posterior'):
@@ -54,12 +52,10 @@ class BNN(object):
             self.inference.run(n_iter=iterations)
             print(self.session.run(self.inference.loss, feed_dict={self.X: X_train, self.Y: Y_train}))
 
-
     def fit(self, X_train, Y_train, iterations=1000):
         self._inference(X_train, Y_train, iterations)
 
-
-    def predict(self):
+    def predict(self, X):
         # TODO: MC Dropout: apply dropout at test time to obtain mean results and uncertainty over the predictions
         # This allows to represent model uncertainty in deep learning, using dropout as a Bayesian approximation
         # return self.session.run(self.inference.loss, feed_dict={X: X_test, Y: y_test})
