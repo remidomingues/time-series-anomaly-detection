@@ -1,7 +1,8 @@
 import numpy as np
 import tensorflow as tf
+from sklearn.preprocessing import OneHotEncoder
 import edward as ed
-from edward.models import Normal
+from edward.models import Normal, OneHotCategorical
 
 class BNN(object):
     """ http://rpubs.com/arowan/bayesian_deep_learning """
@@ -19,7 +20,8 @@ class BNN(object):
                 self.weights.append([W_i, b_i])
 
             self.X = tf.placeholder(tf.float32, [n_samples, d_in], name='X')
-            self.Y = Normal(loc=self._neural_network(self.X), scale=0.1 * tf.ones(n_samples, dtype=tf.float32), name='Y')
+            # self.Y = Normal(loc=self._neural_network(self.X), scale=0.1 * tf.ones(n_samples, dtype=tf.float32), name='Y')
+            self.Y = OneHotCategorical(logits=self._neural_network(self.X))
 
     def _neural_network(self, x):
         h = x
@@ -27,7 +29,7 @@ class BNN(object):
             h = tf.matmul(h, W_i) + b_i
             if i != len(self.weights)-1:
                 h = tf.tanh(h)
-        return tf.reshape(h, [-1])
+        return h #tf.reshape(h,)
 
     def _inference(self, X_train, Y_train, iterations):
         with tf.name_scope('posterior'):
@@ -47,6 +49,10 @@ class BNN(object):
                 inference_dict[W_i] = qW_i
                 inference_dict[b_i] = qb_i
 
+            Y_train = Y_train[np.newaxis].T
+            self.oneHotEncoder = OneHotEncoder(sparse=False).fit(Y_train)
+            Y_train = self.oneHotEncoder.transform(Y_train)
+
             self.inference = ed.KLqp(inference_dict, data={self.X: X_train, self.Y: Y_train})
 
             self.inference.run(n_iter=iterations)
@@ -59,10 +65,10 @@ class BNN(object):
         # TODO: MC Dropout: apply dropout at test time to obtain mean results and uncertainty over the predictions
         # This allows to represent model uncertainty in deep learning, using dropout as a Bayesian approximation
         # return self.session.run(self.inference.loss, feed_dict={X: X_test, Y: y_test})
-        pass
+        return self.Y.eval(feed_dict={self.X: X})
 
 
-if __name__ == "__main__":
+def test_multivariate_regression():
     D = 1
     N = 100
     noise_std=0.1
@@ -73,3 +79,20 @@ if __name__ == "__main__":
     X = X.reshape((N, D))
     model = BNN(N, D, D, 10, 1)
     model.fit(X, Y, iterations=1000)
+
+def test_classification():
+    from sklearn import datasets, metrics
+    X, Y = datasets.load_iris(return_X_y=True)
+    N, d_in, d_out = X.shape[0], X.shape[1], len(set(Y))
+    model = BNN(N, d_in, d_out, 128, 3)
+    model.fit(X, Y, iterations=300)
+    Y_pred = model.predict(X)
+    Y_pred = [np.argmax(pred) for pred in Y_pred] # One-hot decoding
+    print(Y)
+    print('\n')
+    print(Y_pred)
+    print(metrics.accuracy_score(Y, Y_pred))
+
+if __name__ == "__main__":
+    # test_multivariate_regression()
+    test_classification()
