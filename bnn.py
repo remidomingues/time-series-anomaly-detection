@@ -6,6 +6,7 @@ from edward.models import Normal, OneHotCategorical
 
 class BNN(object):
     """ http://rpubs.com/arowan/bayesian_deep_learning """
+    # TODO: batches https://alpha-i.co/blog/MNIST-for-ML-beginners-The-Bayesian-Way.html
     def __init__(self, n_samples, d_in, d_out, hidden_units, hidden_layers):
         self.dims = [(d_in, hidden_units)]
         for _ in range(hidden_units):
@@ -21,7 +22,7 @@ class BNN(object):
 
             self.X = tf.placeholder(tf.float32, [n_samples, d_in], name='X')
             # self.Y = Normal(loc=self._neural_network(self.X), scale=0.1 * tf.ones(n_samples, dtype=tf.float32), name='Y')
-            self.Y = OneHotCategorical(logits=self._neural_network(self.X))
+            self.Y = OneHotCategorical(logits=self._neural_network(self.X), name='Y')
 
     def _neural_network(self, x):
         h = x
@@ -65,7 +66,9 @@ class BNN(object):
         # TODO: MC Dropout: apply dropout at test time to obtain mean results and uncertainty over the predictions
         # This allows to represent model uncertainty in deep learning, using dropout as a Bayesian approximation
         # return self.session.run(self.inference.loss, feed_dict={X: X_test, Y: y_test})
-        return self.Y.eval(feed_dict={self.X: X})
+        # return self.Y.eval(feed_dict={self.X: X})
+        print(self._neural_network(X))
+        # return ed.evaluate('Y', data={self.X: X})
 
 
 def test_multivariate_regression():
@@ -84,7 +87,7 @@ def test_classification():
     from sklearn import datasets, metrics
     X, Y = datasets.load_iris(return_X_y=True)
     N, d_in, d_out = X.shape[0], X.shape[1], len(set(Y))
-    model = BNN(N, d_in, d_out, 128, 3)
+    model = BNN(N, d_in, d_out, 30, 1)
     model.fit(X, Y, iterations=300)
     Y_pred = model.predict(X)
     Y_pred = [np.argmax(pred) for pred in Y_pred] # One-hot decoding
