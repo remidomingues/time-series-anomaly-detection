@@ -28,8 +28,8 @@ class LSTMAEBNN:
         """
         overlap: if 0, X will be chunked into sequences without overlap
         """
-        return np.array([X[min(start, X.shape[0]-window_size):start+window_size]
-                        for start in range(0, X.shape[0], window_size-overlap)])
+        width = window_size - overlap
+        return np.array([X[start:(start + window_size)] for start in range(0, X.shape[0] - width, width)])
 
     def _fit_bnn(self, actions, X, Y, bnn_hdim=10, bnn_hlayer=1, iterations=1000):
         """
@@ -72,7 +72,7 @@ class LSTMAEBNN:
 
         # self.model.get_layer('recurrentseq').get_weights()
         if verbose:
-            print(self.model.summary())
+            self.model.summary()
 
         # Latent variables (n_samples, n_hidden, d_in)
         # latent = self.encoder.predict(X_train)
@@ -103,13 +103,10 @@ class LSTMAEBNN:
         # else:
         #     ValueError('Unknown distance metric: {}'.format(metric))
 
-        X_pred = np.concatenate([seq[:self.sequence_length - self.window_overlap] for seq in out])
-        print(X_pred.shape)
+        temp = [out[0]]
+        temp += [seq[self.window_overlap:] for seq in out[1:]]
+        X_pred = np.concatenate(temp)
         X_pred = self._decode_sequence(X_pred)
-        print(batches.shape)
-        print(X_test.shape, X_pred.shape)  # ISSUE HERE! Check _sliding_batches function
-        # AND CHECK how we ignore the overlap in line 106!
-
         return X_pred, accuracy_score(X_test, X_pred)  # Percentage of identical events predicted
 
     def predict_action(self, X_test):
@@ -127,7 +124,8 @@ if __name__ == "__main__":
     data = import_dataset('diseases')
     X_train, X_test = data[:int(data.shape[0]*TRAINING_PERCENT)], data[int(data.shape[0]*TRAINING_PERCENT):]
     model = LSTMAEBNN(window_size=10, overlap=2)
-    model.fit(X_train, epochs=10, hidden_dim=5, hidden_layers=1, verbose=True) # bnn_hdim=100, bnn_hlayer=1, bnn_epochs=1000
+    model.fit(X_train, epochs=10, hidden_dim=42, hidden_layers=2, verbose=False) # bnn_hdim=100, bnn_hlayer=1, bnn_epochs=1000
     X_pred, score = model.predict_seq(X_test)
     print('Prediction accuracy: {}%'.format(score))
+    print(X_test)
     print(X_pred)
