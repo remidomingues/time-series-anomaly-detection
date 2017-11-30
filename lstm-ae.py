@@ -4,9 +4,9 @@ import tensorflow as tf
 from tensorflow.python.ops.rnn_cell import LSTMCell, LSTMStateTuple
 from tensorflow.python.layers import core as layers_core
 import math
+import pickle
 
 import helpers #for formatting data into batches and generating random sequence data
-from models import Seq2Seq
 
 
 TRAINING_PERCENT = 0.8
@@ -26,10 +26,12 @@ class LSTMAE:
     ADDITIONAL_CHARS = 3
 
     MODEL_PATH = 'tmp/seq2seq.ckpt'
+    CONFIG_PATH = 'tmp/seq2seq.pickle'
 
-    def __init__(self, embedding_size=20):
+    def __init__(self, embedding_size=20, batch_size=128):
         tf.reset_default_graph()  # Clears the default graph stack and resets the global default graph.
         self.session = tf.Session()
+
         self.input_embedding_size = embedding_size  # Size of the vector used as a latent representation for each action (the representation is trained). similar to word2vec representation
 
     def _batches(X, batch_size, dynamic_pad=False, allow_smaller_final_batch=False):
@@ -55,7 +57,7 @@ class LSTMAE:
             # batches = [np.array(batch)]
         return padded_batches, lengths
 
-    def _encode_sequences(self, X, batch_size=64, fit=False):
+    def _encode_sequences(self, X, fit=False):
         """
         X: list of sequences of variable length
         out: batches of sequences. The sequence length is fixed within a given batch
@@ -76,7 +78,7 @@ class LSTMAE:
 
         # X is transformed into a list of batches. Padding is then added to have sequences of identical length
         # within each batch
-        batches, lengths = LSTMAE._batches(X, batch_size, dynamic_pad=False, allow_smaller_final_batch=False)
+        batches, lengths = LSTMAE._batches(X, self.batch_size, dynamic_pad=False, allow_smaller_final_batch=False)
 
         # TODO: We may have to swap axes for each batch...
         # inputs_time_major = inputs_batch_major.swapaxes(0, 1) <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
@@ -132,7 +134,6 @@ class LSTMAE:
     def _build_decoder_cell(self, decoder_hidden_units, attention):
         self.decoder_cell = LSTMCell(decoder_hidden_units)
         encoder_max_length, batch_size = tf.unstack(tf.shape(self.encoder_inputs))
-        print(encoder_max_length, batch_size )
 
         decoder_inputs = tf.ones([encoder_max_length, batch_size], dtype=tf.int32)
         self.decoder_inputs_embedded = tf.nn.embedding_lookup(self.embeddings, decoder_inputs)
@@ -157,7 +158,7 @@ class LSTMAE:
             attention_zero = self.decoder_cell.zero_state(batch_size=batch_size, dtype=tf.float32)
             self.encoder_final_state_attention = attention_zero.clone(cell_state=self.encoder_final_state)
 
-    def _build_decoder(self, batch_size, train=True):
+    def _build_decoder(self, train=True):
         if train:
             helper = tf.contrib.seq2seq.TrainingHelper(
                 inputs=self.decoder_inputs_embedded,
@@ -166,7 +167,7 @@ class LSTMAE:
         else:
             helper = tf.contrib.seq2seq.GreedyEmbeddingHelper(
                   embedding=self.embeddings,
-                  start_tokens=tf.tile([LSTMAE.BOS], [batch_size]),
+                  start_tokens=tf.tile([LSTMAE.BOS], [self.batch_size]),
                   end_token=LSTMAE.EOS)
 
         # Decoder
@@ -186,7 +187,7 @@ class LSTMAE:
             self.infer_decoder_prediction = decoder_outputs.sample_id
 
 
-    def _build_network(self, hidden_units=16, batch_size=64, attention=True):
+    def _build_network(self, hidden_units=16, attention=True):
         # TODO <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
         # cells = tf.contrib.rnn.DropoutWrapper(
         #     cell,
@@ -202,8 +203,8 @@ class LSTMAE:
 
         self._build_encoder(hidden_units)
         self._build_decoder_cell(hidden_units * 2, attention)  # Twice the size, as the decoder is bidirectional
-        self._build_decoder(batch_size, train=True)
-        self._build_decoder(batch_size, train=False)
+        self._build_decoder(train=True)
+        self._build_decoder(train=False)
 
         self.decoder_targets = tf.placeholder(shape=(None, None), dtype=tf.int32, name='decoder_targets')
 
@@ -221,17 +222,18 @@ class LSTMAE:
         self.session.run(tf.global_variables_initializer())
 
 
-    def fit(self, X_train, iterations=100000, hidden_units=16, attention=True, display_step=1000,
-            display_samples=3, batch_size=64, verbose=True):
+    def fit(self, X_train, hidden_units=16, attention=True, iterations=100000, batch_size=128, display_step=1000, display_samples=3, verbose=True):
         """
         X_train: sequences of variable length, containing action IDs
         """
         # Split the training data into overlapping batches, based on a sliding window
-        np.random.shuffle(X_train)
+        self.hidden_units = hidden_units
+        self.attention = attention
         self.batch_size = batch_size
-        batches, lengths = self._encode_sequences(X_train, batch_size=batch_size, fit=True)
+        np.random.shuffle(X_train)
+        batches, lengths = self._encode_sequences(X_train, fit=True)
 
-        self._build_network(hidden_units, batch_size, attention)
+        self._build_network(self.hidden_units, self.attention)
 
         for i in range(iterations):
             batch_idx = i % len(batches)
@@ -264,7 +266,7 @@ class LSTMAE:
         out: (n_samples), return the reconstruction error for each action sequence
         A high reconstruction error denotes an anomaly
         """
-        batches, lengths = self._encode_sequences(X, batch_size=self.batch_size, fit=False)
+        batches, lengths = self._encode_sequences(X, fit=False)
         scores, predictions = [], []
 
         for batch, l in zip(batches, lengths):
@@ -284,23 +286,30 @@ class LSTMAE:
         return np.concatenate(scores), np.concatenate(predictions)
 
 
+    def load(self):
+        with open(LSTMAE.CONFIG_PATH, 'rb') as handle:
+            self.vocab_size, self.hidden_units, self.attention, self.batch_size, self.data_encoder, self.data_decoder = pickle.load(handle)
+
+        self._build_network(self.hidden_units, self.attention)
+
+        tf.train.Saver().restore(self.session, LSTMAE.MODEL_PATH)
+
+
     def save(self):
         tf.train.Saver().save(self.session, LSTMAE.MODEL_PATH)
-
-
-    def save(self):
-        tf.train.Saver().restore(self.session, LSTMAE.MODEL_PATH)
+        config = [self.vocab_size, self.hidden_units, self.attention, self.batch_size, self.data_encoder, self.data_decoder]
+        with open(LSTMAE.CONFIG_PATH, 'wb') as handle:
+            pickle.dump(config, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 if __name__ == "__main__":
     data = import_dataset('toy')
-    print(data)
-    print(data.shape)
     X_train, X_test = data[:int(data.shape[0]*TRAINING_PERCENT)], data[int(data.shape[0]*TRAINING_PERCENT):]
     model = LSTMAE(embedding_size=20)
-    model.fit(X_train, iterations=20, hidden_units=16, attention=True, display_step=200, display_samples=3,
-              batch_size=128, verbose=True)
+    # model.fit(X_train, hidden_units=16, attention=True, iterations=20, batch_size=128, display_step=200, display_samples=3, verbose=True)
+    # model.save()
+    model.load()
     scores, X_pred = model.predict(X_test)
-    print('Prediction accuracy: {}%'.format(np.mean(scores)))
-    for i, o, s in zip(X_test, X_pred, score):
-        print('{} => {} ({:.2f}%)'.format(i, o, s*100))
+    # print('Prediction accuracy: {}%'.format(np.mean(scores)))
+    # for i, o, s in zip(X_test, X_pred, score):
+    #     print('{} => {} ({:.2f}%)'.format(i, o, s*100))
