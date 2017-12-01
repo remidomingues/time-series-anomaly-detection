@@ -11,8 +11,9 @@ import helpers #for formatting data into batches and generating random sequence 
 
 TRAINING_PERCENT = 0.8
 
+
 def import_dataset(ds_name):
-    if ds_name == 'toy':
+    if ds_name == 'random':
         return np.array(next(helpers.random_sequences(length_from=3, length_to=8,
                                    vocab_lower=3, vocab_upper=10,
                                    batch_size=10000)))
@@ -28,11 +29,11 @@ class LSTMAE:
     MODEL_PATH = 'tmp/seq2seq.ckpt'
     CONFIG_PATH = 'tmp/seq2seq.pickle'
 
-    def __init__(self, embedding_size=20, batch_size=128):
+
+    def __init__(self):
         tf.reset_default_graph()  # Clears the default graph stack and resets the global default graph.
         self.session = tf.Session()
 
-        self.input_embedding_size = embedding_size  # Size of the vector used as a latent representation for each action (the representation is trained). similar to word2vec representation
 
     def _batches(X, batch_size, dynamic_pad=False, allow_smaller_final_batch=False):
         if dynamic_pad:
@@ -56,6 +57,7 @@ class LSTMAE:
             #             seq.append(LSTMAE.PAD)
             # batches = [np.array(batch)]
         return padded_batches, lengths
+
 
     def _encode_sequences(self, X, batch_size, fit=False):
         """
@@ -85,24 +87,26 @@ class LSTMAE:
 
         return batches, lengths
 
+
     def _decode_sequences(self, X):
         """
         X: batches of sequences
         """
         return [[self.data_encoder[_x] for _x in x] for x in X]
 
-    def _build_encoder(self, encoder_hidden_units):
+
+    def _build_encoder(self, encoder_hidden_units, embedding_size, encoder_dropout=1.):
         self.encoder_inputs = tf.placeholder(shape=(None, None), dtype=tf.int32, name='encoder_inputs')
         #contains the lengths for each of the sequence in the batch, we will pad so all the same
         #if you don't want to pad, check out dynamic memory networks to input variable length sequences
         self.encoder_inputs_length = tf.placeholder(shape=(None,), dtype=tf.int32, name='encoder_inputs_length')
 
-        self.embeddings = tf.Variable(tf.random_uniform([self.vocab_size, self.input_embedding_size], -1.0, 1.0), dtype=tf.float32)
+        self.embeddings = tf.Variable(tf.random_uniform([self.vocab_size, embedding_size], -1.0, 1.0), dtype=tf.float32)
         #replace one-hot encoded heavy matrix representations
         encoder_inputs_embedded = tf.nn.embedding_lookup(self.embeddings, self.encoder_inputs)
 
         encoder_cell =  LSTMCell(encoder_hidden_units)
-        # encoder_cell = tf.contrib.rnn.DropoutWrapper(encoder_cell, output_keep_prob=0.5, input_keep_prob=1.0, state_keep_prob=1.0)
+        encoder_cell = tf.contrib.rnn.DropoutWrapper(encoder_cell, output_keep_prob=encoder_dropout, input_keep_prob=1.0, state_keep_prob=1.0)
 
         ((encoder_fw_outputs, encoder_bw_outputs),
          (encoder_fw_final_state, encoder_bw_final_state)) = tf.nn.bidirectional_dynamic_rnn(
@@ -130,9 +134,10 @@ class LSTMAE:
             h=encoder_final_state_h
         )
 
-    def _build_decoder_cell(self, decoder_hidden_units, attention):
+
+    def _build_decoder_cell(self, decoder_hidden_units, attention, decoder_dropout=1.):
         self.decoder_cell = LSTMCell(decoder_hidden_units)
-        # self.decoder_cell = tf.contrib.rnn.DropoutWrapper(self.decoder_cell, output_keep_prob=0.5, input_keep_prob=1.0, state_keep_prob=1.0)
+        self.decoder_cell = tf.contrib.rnn.DropoutWrapper(self.decoder_cell, output_keep_prob=decoder_dropout, input_keep_prob=1.0, state_keep_prob=1.0)
         encoder_max_length, self.batch_size = tf.unstack(tf.shape(self.encoder_inputs))
 
         decoder_inputs = tf.ones([encoder_max_length, self.batch_size], dtype=tf.int32)
@@ -158,6 +163,7 @@ class LSTMAE:
             attention_zero = self.decoder_cell.zero_state(batch_size=self.batch_size, dtype=tf.float32)
             self.encoder_final_state_attention = attention_zero.clone(cell_state=self.encoder_final_state)
 
+
     def _build_decoder(self, train=True):
         self.projection_layer = layers_core.Dense(self.vocab_size, use_bias=True)
 
@@ -181,7 +187,7 @@ class LSTMAE:
 
         # Dynamic decoding
         (decoder_outputs, final_state, final_sequence_lengths) = tf.contrib.seq2seq.dynamic_decode(
-            decoder, output_time_major=True)
+            decoder, output_time_major=True, maximum_iterations=100)
         if train:
             self.train_decoder_logits = decoder_outputs.rnn_output
             self.train_decoder_prediction = decoder_outputs.sample_id
@@ -189,24 +195,12 @@ class LSTMAE:
             self.infer_decoder_prediction = decoder_outputs.sample_id
 
 
-    def _build_network(self, train, hidden_units=16, attention=True):
-        # TODO <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-        # cells = tf.contrib.rnn.DropoutWrapper(
-        #     cell,
-        #     input_keep_prob=1.0,
-        #     output_keep_prob=1.0,
-        #     state_keep_prob=1.0,
-        #     variational_recurrent=False,
-        #     input_size=None,
-        #     dtype=None,
-        #     seed=None
-        # )
+    def _build_network(self, train, hidden_units=16, embedding_size=20, attention=True, encoder_dropout=1., decoder_dropout=1.):
         self.decoder_targets = tf.placeholder(shape=(None, None), dtype=tf.int32, name='decoder_targets')
 
-        self._build_encoder(hidden_units)
-        self._build_decoder_cell(hidden_units * 2, attention)  # Twice the size, as the decoder is bidirectional
-        self._build_decoder(train=train)
-
+        self._build_encoder(hidden_units, embedding_size, encoder_dropout)
+        self._build_decoder_cell(hidden_units * 2, attention, decoder_dropout)  # Twice the size, as the decoder is bidirectional
+        self._build_decoder(train)
 
         if train:
             #cross entropy loss
@@ -224,18 +218,22 @@ class LSTMAE:
             self.session.run(tf.global_variables_initializer())
 
 
-    def fit(self, X_train, hidden_units=16, attention=True, iterations=100000, batch_size=128, display_step=1000, display_samples=3, verbose=True):
+    def fit(self, X_train, hidden_units=16, embedding_size=20, attention=True, encoder_dropout=1., decoder_dropout=1.,
+            iterations=100000, batch_size=128, display_step=1000, display_samples=3, verbose=True):
         """
         X_train: sequences of variable length, containing action IDs
         """
         # Split the training data into overlapping batches, based on a sliding window
+        self.embedding_size = embedding_size  # Size of the vector used as a latent representation for each action (the representation is trained). similar to word2vec representation
         self.hidden_units = hidden_units
         self.attention = attention
         self.batch_size = batch_size
+        self.encoder_dropout = encoder_dropout
+        self.decoder_dropout = decoder_dropout
         np.random.shuffle(X_train)
         batches, lengths = self._encode_sequences(X_train, self.batch_size, fit=True)
 
-        self._build_network(True, self.hidden_units, self.attention)
+        self._build_network(True, self.hidden_units, self.embedding_size, self.attention, self.encoder_dropout, self.decoder_dropout)
 
         for i in range(iterations):
             batch_idx = i % len(batches)
@@ -265,16 +263,13 @@ class LSTMAE:
     def predict(self, X):
         """
         X: sequences of variable length, containing action IDs
-        out: (n_samples), return the reconstruction error for each action sequence
-        A high reconstruction error denotes an anomaly
+        out: (n_samples), return the reconstruction accuracy for each action sequence
+        A low reconstruction accuracy denotes an anomaly
         """
         batches, lengths = self._encode_sequences(X, 1, fit=False)
         scores, predictions = [], []
 
-        i = 0
         for batch, l in zip(batches, lengths):
-            print(i)
-            i += 1
             args = {
                 self.encoder_inputs: batch,
                 self.encoder_inputs_length: l,
@@ -287,28 +282,31 @@ class LSTMAE:
 
     def load(self):
         with open(LSTMAE.CONFIG_PATH, 'rb') as handle:
-            self.vocab_size, self.hidden_units, self.attention, self.data_encoder, self.data_decoder = pickle.load(handle)
+            (self.vocab_size, self.hidden_units, self.embedding_size, self.attention, self.encoder_dropout,
+                self.decoder_dropout, self.data_encoder, self.data_decoder) = pickle.load(handle)
 
-        self._build_network(False, self.hidden_units, self.attention)
+        self._build_network(False, self.hidden_units, self.embedding_size, self.attention)
 
         tf.train.Saver().restore(self.session, LSTMAE.MODEL_PATH)
 
 
     def save(self):
         tf.train.Saver().save(self.session, LSTMAE.MODEL_PATH)
-        config = [self.vocab_size, self.hidden_units, self.attention, self.data_encoder, self.data_decoder]
+        config = [self.vocab_size, self.hidden_units, self.embedding_size, self.attention,
+                  self.encoder_dropout, self.decoder_dropout, self.data_encoder, self.data_decoder]
         with open(LSTMAE.CONFIG_PATH, 'wb') as handle:
             pickle.dump(config, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 if __name__ == "__main__":
-    data = import_dataset('toy')
+    data = import_dataset('random')
     X_train, X_test = data[:int(data.shape[0]*TRAINING_PERCENT)], data[int(data.shape[0]*TRAINING_PERCENT):]
-    model = LSTMAE(embedding_size=20)
-    # model.fit(X_train, hidden_units=16, attention=True, iterations=2000, batch_size=128, display_step=200, display_samples=3, verbose=True)
+    model = LSTMAE()
+    # model.fit(X_train, hidden_units=16, embedding_size=20, attention=True, encoder_dropout=1., decoder_dropout=1.,
+    #           iterations=2000, batch_size=128, display_step=200, display_samples=3, verbose=True)
     # model.save()
     model.load()
     scores, X_pred = model.predict(X_test)
-    # print('Prediction accuracy: {}%'.format(np.mean(scores)))
-    # for i, o, s in zip(X_test, X_pred, score):
+    print('Prediction accuracy: {}%'.format(np.mean(scores)))
+    # for i, o, s in zip(X_test[:10], X_pred[:10], scores[:10]):
     #     print('{} => {} ({:.2f}%)'.format(i, o, s*100))
